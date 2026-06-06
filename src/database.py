@@ -13,6 +13,7 @@ async def get_pool() -> asyncpg.Pool:
             min_size=2,
             max_size=20,
             command_timeout=30,
+            ssl=False,
         )
         logger.info("DB pool created (host={})", settings.db.host)
     return _pool
