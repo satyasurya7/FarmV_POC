@@ -1,0 +1,51 @@
+version: "3.9"
+
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: farmvaidya_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-farmvaidya}
+      POSTGRES_USER: ${POSTGRES_USER:-farmvaidya}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-farmvaidya} -d ${POSTGRES_DB:-farmvaidya}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  voice_agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: farmvaidya_agent
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Override local dev path with the container path
+      GOOGLE_APPLICATION_CREDENTIALS: /app/credentials/vertex-ai-project-494805-0340a8a815b9.json
+      POSTGRES_HOST: postgres   # use Docker service name, not localhost
+    volumes:
+      - ./credentials:/app/credentials:ro          # GCP service account JSON
+      - ./knowledge_base:/app/knowledge_base:ro     # KB files for ingest
+    ports:
+      - "${SERVER_PORT:-8080}:8080"                 # HTTP health + REST
+      - "${WEBSOCKET_PORT:-8765}:8765"              # Telephony WebSocket
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  postgres_data:

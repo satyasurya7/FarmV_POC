@@ -1,0 +1,134 @@
+Build and deploy a Proof of Concept (POC) Telugu Voice Agent capable of handling real-time telephonic conversations using Retrieval-Augmented Generation (RAG).
+
+The solution should demonstrate end-to-end integration of telephony, speech processing, large language models, knowledge retrieval, logging, and deployment.
+________________________________________
+Technical Requirements
+Voice AI Framework
+Use:
+•	Pipecat Framework
+
+Speech-to-Text (STT)
+•	Soniox
+•	Telugu Language Support 
+
+Large Language Model (LLM)
+•	Gemini 2.5 Flash
+•	Vertex AI (Mumbai Region) (Attached)
+
+Text-to-Speech (TTS)
+•	Cartesia
+•	Telugu Voice Output 
+
+Knowledge Intelligence
+Implement Retrieval-Augmented Generation (RAG) using the knowledge base (Attached) provided by Farm Vaidya.
+The solution should:
+•	Retrieve relevant information from the knowledge base
+•	Generate contextual responses
+•	Maintain conversational context across multiple turns
+
+Telephony Integration
+Integrate with:
+•	Tata Tele Business Services
+The agent should:
+•	Receive incoming calls
+•	Process user queries
+•	Respond through synthesized voice
+Database
+Use PostgreSQL (or local PostgreSQL instance) to store: 
+•	Call metadata
+•	User utterances
+•	Agent responses
+•	Session logs
+•	Error logs
+•	Performance metrics
+________________________________________
+Functional Requirements
+The solution should demonstrate:
+1. Conversational Memory
+Example:
+User: "BPT 2537 crop duration entha?"
+Agent: "165 days."
+User: "Yield entha vastundi?"
+The agent should understand that the second question refers to the same variety.
+
+2. RAG-Based Retrieval
+The agent should answer questions strictly based on the supplied knowledge base.
+
+3. Concurrent Call Handling
+The system should support multiple simultaneous call sessions without conversation overlap or data leakage.
+Minimum expectation:
+•	5 concurrent calls
+
+4. Error Handling
+The system should gracefully handle:
+•	STT failures
+•	API timeouts
+•	Empty retrieval results
+•	Network interruptions
+
+5. Logging & Observability
+Provide visibility into:
+•	Call logs
+•	Retrieval logs
+•	Response latency
+•	Errors and exceptions
+________________________________________
+Deployment Requirements
+Deploy the solution on a cloud VM or equivalent environment.
+The deployment should be accessible for demonstration purposes.
+Docker-based deployment is preferred.
+________________________________________
+Tools & Resources
+You may use:
+•	Claude Code
+•	Cursor
+•	GitHub Copilot
+•	Any open-source libraries
+Farm Vaidya will provide:
+•	API credentials
+•	Knowledge base
+•	Telephony credentials
+•	Access details required for development and testing
+________________________________________
+Deliverables
+Please submit the following:
+1. Source Code
+•	GitHub Repository
+•	Complete source code
+•	Environment configuration instructions
+2. Architecture Diagram
+Include architecture covering:
+Telephony
+→ STT
+→ RAG
+→ LLM
+→ TTS
+→ Telephony
+Also include database and logging components.
+3. Deployment Documentation
+Provide:
+•	Setup instructions
+•	Environment variables
+•	Deployment steps
+•	Startup procedures
+4. Technical Notes
+Briefly explain:
+•	Chunking strategy
+•	Embedding model used
+•	Retrieval approach
+•	Session management
+•	Concurrency strategy
+5. Demonstration Video
+5–10 minute screen recording demonstrating:
+•	Incoming call
+•	Telugu conversation
+•	RAG retrieval
+•	Log generation
+•	Multiple concurrent calls
+•	Running deployment
+
+Timeline
+Within 8 working hours from the time credentials and resources are shared.
+
+
+

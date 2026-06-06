@@ -1,0 +1,50 @@
+# Environment
+.env
+.env.local
+
+# Credentials (never commit)
+credentials/
+*.json
+!package.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Knowledge base (proprietary data — do not commit)
+knowledge_base/
+*.docx
+
+# Logs
+*.log
+logs/
+
+# Docker
+docker/volumes/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Test/debug artifacts
+*.wav
+*.bin
+check_last_call.py
+debug_session.py
+
+# Recordings (generated at runtime)
+data/recordings/*.wav
+
+# Pytest cache
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Farm Vaidya · Call Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .status-active    { @apply bg-blue-100 text-blue-700; }
+    .status-completed { background:#dcfce7; color:#15803d; }
+    .status-error     { background:#fee2e2; color:#b91c1c; }
+    .status-dropped   { background:#fef9c3; color:#a16207; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <!-- Header -->
+  <header class="bg-green-700 text-white px-6 py-4 shadow-md">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div>
+        <h1 class="text-xl font-bold tracking-tight">🌾 Farm Vaidya &nbsp;·&nbsp; రైతు నెస్తం</h1>
+        <p class="text-green-300 text-sm mt-0.5">Call Monitoring Dashboard</p>
+      </div>
+      <div class="text-right">
+        <span id="active-badge" class="hidden bg-green-500 text-white text-xs px-2 py-1 rounded-full font-semibold">● LIVE</span>
+        <p id="last-updated" class="text-green-300 text-xs mt-1"></p>
+      </div>
+    </div>
+  </header>
+
+  <!-- Stats bar -->
+  <div class="bg-white border-b shadow-sm">
+    <div class="max-w-7xl mx-auto px-6 py-4 grid grid-cols-2 md:grid-cols-4 gap-4" id="stats-bar">
+      <div class="animate-pulse h-10 bg-gray-100 rounded col-span-4"></div>
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <main class="max-w-7xl mx-auto px-6 py-6">
+
+    <!-- Toolbar -->
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold text-gray-700">Recent Calls</h2>
+      <div class="flex items-center gap-3">
+        <input id="search" type="text" placeholder="Search caller name or phone…"
+          class="border rounded-lg px-3 py-1.5 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-green-400"
+          oninput="filterTable()">
+        <button onclick="refresh()" class="text-sm text-green-600 hover:text-green-800 font-medium">↻ Refresh</button>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="bg-white rounded-xl shadow overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-gray-400 text-xs uppercase tracking-wide border-b">
+          <tr>
+            <th class="px-4 py-3 text-left">Time (IST)</th>
+            <th class="px-4 py-3 text-left">Caller</th>
+            <th class="px-4 py-3 text-left">Phone</th>
+            <th class="px-4 py-3 text-center">Turns</th>
+            <th class="px-4 py-3 text-center">Duration</th>
+            <th class="px-4 py-3 text-center">Status</th>
+            <th class="px-4 py-3 text-center">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="sessions-table">
+          <tr><td colspan="7" class="px-4 py-10 text-center text-gray-300 text-base">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p id="row-count" class="text-xs text-gray-400 mt-2 text-right"></p>
+  </main>
+
+  <script>
+    let allSessions = [];
+
+    function fmtTime(iso) {
+      return new Date(iso).toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit', month: 'short',
+        hour: '2-digit', minute: '2-digit', hour12: true
+      });
+    }
+
+    function fmtDur(s) {
+      if (s == null) return '—';
+      if (s < 60) return `${Math.round(s)}s`;
+      return `${Math.floor(s/60)}m ${Math.round(s%60)}s`;
+    }
+
+    function statusBadge(s) {
+      const map = {
+        completed: 'background:#dcfce7;color:#15803d',
+        error:     'background:#fee2e2;color:#b91c1c',
+        dropped:   'background:#fef9c3;color:#a16207',
+        active:    'background:#dbeafe;color:#1d4ed8',
+      };
+      const style = map[s] || 'background:#f3f4f6;color:#6b7280';
+      return `<span style="${style}" class="px-2 py-0.5 rounded-full text-xs font-medium capitalize">${s}</span>`;
+    }
+
+    function renderRows(sessions) {
+      const tbody = document.getElementById('sessions-table');
+      if (!sessions.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-300">No calls found</td></tr>';
+        document.getElementById('row-count').textContent = '';
+        return;
+      }
+      tbody.innerHTML = sessions.map(s => {
+        const recLinks = s.has_recording
+          ? `<a href="/dashboard/recordings/${s.id}_conversation.wav" class="text-purple-500 hover:text-purple-700 text-xs font-medium" title="Play conversation recording">🎵 Recording</a>`
+          : '';
+
+        return `
+          <tr class="border-t hover:bg-gray-50 transition-colors">
+            <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">${fmtTime(s.started_at)}</td>
+            <td class="px-4 py-3 font-medium text-gray-800">${s.caller_name || '<span class="text-gray-300 font-normal">—</span>'}</td>
+            <td class="px-4 py-3 text-gray-500 text-xs">${s.phone_number || '—'}</td>
+            <td class="px-4 py-3 text-center text-gray-600">${s.turn_count}</td>
+            <td class="px-4 py-3 text-center text-gray-600">${fmtDur(s.duration_s)}</td>
+            <td class="px-4 py-3 text-center">${statusBadge(s.status)}</td>
+            <td class="px-4 py-3 text-center">
+              <a href="/dashboard/session?id=${s.id}" class="text-green-600 hover:text-green-800 text-xs font-semibold mr-2">View ↗</a>
+              ${recLinks}
+            </td>
+          </tr>`;
+      }).join('');
+      document.getElementById('row-count').textContent = `Showing ${sessions.length} calls`;
+    }
+
+    function filterTable() {
+      const q = document.getElementById('search').value.toLowerCase();
+      if (!q) { renderRows(allSessions); return; }
+      renderRows(allSessions.filter(s =>
+        (s.caller_name || '').toLowerCase().includes(q) ||
+        (s.phone_number || '').includes(q)
+      ));
+    }
+
+    async function loadStats() {
+      const r = await fetch('/dashboard/api/stats');
+      const d = await r.json();
+      if (d.active_now > 0) document.getElementById('active-badge').classList.remove('hidden');
+      else document.getElementById('active-badge').classList.add('hidden');
+
+      document.getElementById('stats-bar').innerHTML = `
+        <div>
+          <p class="text-2xl font-bold text-green-700">${d.total_today}</p>
+          <p class="text-xs text-gray-400 mt-0.5">Calls today</p>
+        </div>
+        <div>
+          <p class="text-2xl font-bold text-blue-600">${d.completed_today}</p>
+          <p class="text-xs text-gray-400 mt-0.5">Completed</p>
+        </div>
+        <div>
+          <p class="text-2xl font-bold text-gray-700">${d.avg_duration_s != null ? d.avg_duration_s + 's' : '—'}</p>
+          <p class="text-xs text-gray-400 mt-0.5">Avg duration</p>
+        </div>
+        <div>
+          <p class="text-2xl font-bold text-purple-600">${d.avg_e2e_ms != null ? d.avg_e2e_ms + 'ms' : '—'}</p>
+          <p class="text-xs text-gray-400 mt-0.5">Avg response time</p>
+        </div>
+      `;
+    }
+
+    async function loadSessions() {
+      const r = await fetch('/dashboard/api/sessions');
+      allSessions = await r.json();
+      filterTable();
+      document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN');
+    }
+
+    async function refresh() {
+      await Promise.all([loadStats(), loadSessions()]);
+    }
+
+    refresh();
+    setInterval(refresh, 30000);
+  </script>
+</body>
+</html>
