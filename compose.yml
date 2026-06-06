@@ -37,6 +37,7 @@ services:
     environment:
       GOOGLE_APPLICATION_CREDENTIALS: /app/credentials/vertex-ai-project-494805-0340a8a815b9.json
       POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
     volumes:
       # :ro,z = read-only + shared SELinux label
       - ./credentials:/app/credentials:ro,z
