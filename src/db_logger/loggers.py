@@ -29,6 +29,21 @@ async def log_session_start(session_id: str, phone_number: str | None, tata_call
     )
 
 
+async def update_session_phone(
+    session_id: str, phone_number: str, call_sid: str | None = None
+) -> None:
+    p = await _pool()
+    await p.execute(
+        """
+        UPDATE call_sessions
+        SET phone_number = $2,
+            tata_call_id = COALESCE($3, tata_call_id)
+        WHERE id = $1::uuid
+        """,
+        session_id, phone_number, call_sid,
+    )
+
+
 async def log_caller_name(session_id: str, name: str) -> None:
     p = await _pool()
     await p.execute(

@@ -15,6 +15,7 @@ Flow:
 
 from __future__ import annotations
 
+import re
 import time
 from typing import List
 
@@ -23,6 +24,7 @@ from loguru import logger
 from fastapi.websockets import WebSocketDisconnect
 
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
     EndFrame,
     ErrorFrame,
     Frame,
@@ -59,6 +61,33 @@ from src.db_logger.loggers import (
     log_session_end,
     log_utterance,
 )
+
+
+def _extract_name(utterance: str) -> str:
+    """Extract caller's first name from turn-1 reply to 'మీ పేరు చెప్పగలరా?'
+
+    Handles patterns like:
+      'నా పేరు నరేంద్ర.'   → 'నరేంద్ర'
+      'నా పేరు రాజు గారు'  → 'రాజు'
+      'నేను సురేష్'        → 'సురేష్'
+      'రాజేష్'             → 'రాజేష్'
+    Falls back to the full utterance if no pattern matches.
+    """
+    text = utterance.strip().rstrip(".")
+    # "నా పేరు [name]" — optionally followed by honorifics
+    m = re.search(r"నా పేరు\s+(.+?)(?:\s+(?:అండి|గారు|sir|Sir|madam))?$", text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().rstrip(".")
+    # "నేను [name]" — "I am [name]"
+    m = re.search(r"నేను\s+(\S+)", text)
+    if m:
+        return m.group(1).rstrip("ని").strip()
+    # Short reply (≤ 2 words) — almost certainly just the name
+    if len(text.split()) <= 2:
+        return text
+    return text
+
+
 from src.error_handler import LLMErrorProcessor, STTGuardProcessor
 from src.prompts import GREETING, NO_CONTEXT_RESPONSE, SYSTEM_PROMPT
 from src.rag.retriever import RetrievedChunk, retrieve
@@ -76,6 +105,7 @@ class RAGContextProcessor(FrameProcessor):
         self._session_id = session_id
         self._turn = 0
         self._utterance_id: str | None = None
+        self._last_retrieval_ms: float = 0.0  # read by LLMResponseLogger
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -109,12 +139,13 @@ class RAGContextProcessor(FrameProcessor):
                     text=user_msg,
                 )
 
-                # Turn 1 is the response to "మీ పేరు చెప్పగలరా?" — log it as caller name
+                # Turn 1 is the response to "మీ పేరు చెప్పగలరా?" — log extracted name
                 if self._turn == 1:
-                    await log_caller_name(self._session_id, user_msg)
+                    await log_caller_name(self._session_id, _extract_name(user_msg))
 
                 try:
                     chunks, retrieval_ms = await retrieve(self._pool, rag_query)
+                    self._last_retrieval_ms = retrieval_ms
                     await log_retrieval(
                         session_id=self._session_id,
                         utterance_id=self._utterance_id,
@@ -141,45 +172,92 @@ class RAGContextProcessor(FrameProcessor):
 
 
 class LLMResponseLogger(FrameProcessor):
-    """Accumulates streaming LLM text and logs the full response on completion."""
+    """Accumulates streaming LLM text and logs the full response + latencies.
+
+    The log entry is buffered after LLMFullResponseEndFrame and only written
+    to the DB once BotStartedSpeakingFrame arrives upstream — this gives us
+    the TTS latency (time from LLM done → first audio playing).
+
+    If the bot never starts speaking (error path), the pending entry is
+    flushed without TTS latency on the next LLMFullResponseStartFrame.
+    """
 
     def __init__(self, rag_processor: RAGContextProcessor):
         super().__init__()
         self._rag = rag_processor
         self._buf: list[str] | None = None
-        self._t0: float = 0.0
+        self._t_llm_start: float = 0.0
+        self._t_llm_end: float | None = None
+        self._pending: dict | None = None  # buffered entry awaiting TTS timing
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 
         if direction == FrameDirection.DOWNSTREAM:
             if isinstance(frame, LLMFullResponseStartFrame):
+                # Flush stale pending entry from a previous turn where TTS never fired
+                if self._pending is not None:
+                    await self._write(tts_ms=None)
                 self._buf = []
-                self._t0 = time.monotonic()
+                self._t_llm_start = time.monotonic()
             elif isinstance(frame, LLMTextFrame) and self._buf is not None:
                 self._buf.append(frame.text)
             elif isinstance(frame, LLMFullResponseEndFrame) and self._buf is not None:
-                await self._flush()
+                await self._buffer()
+
+        elif direction == FrameDirection.UPSTREAM:
+            # BotStartedSpeakingFrame travels upstream from transport.output()
+            if isinstance(frame, BotStartedSpeakingFrame) and self._pending is not None:
+                tts_ms = None
+                if self._t_llm_end is not None:
+                    tts_ms = round((time.monotonic() - self._t_llm_end) * 1000, 1)
+                await self._write(tts_ms=tts_ms)
 
         await self.push_frame(frame, direction)
 
-    async def _flush(self) -> None:
+    async def _buffer(self) -> None:
+        """Prepare log entry after LLM finishes; wait for TTS before writing."""
         if not self._buf:
             self._buf = None
             return
         text = "".join(self._buf)
-        llm_ms = (time.monotonic() - self._t0) * 1000
+        llm_ms = round((time.monotonic() - self._t_llm_start) * 1000, 1)
         self._buf = None
+        self._t_llm_end = time.monotonic()
+        self._pending = {
+            "session_id": self._rag._session_id,
+            "utterance_id": self._rag._utterance_id,
+            "turn": self._rag._turn,
+            "text": text,
+            "llm_ms": llm_ms,
+            "retrieval_ms": self._rag._last_retrieval_ms,
+        }
+
+    async def _write(self, tts_ms: float | None) -> None:
+        """Write response + performance metrics to DB."""
+        if self._pending is None:
+            return
+        p, self._pending, self._t_llm_end = self._pending, None, None
         try:
             await log_response(
-                session_id=self._rag._session_id,
-                utterance_id=self._rag._utterance_id,
-                turn=self._rag._turn,
-                text=text,
-                llm_latency_ms=round(llm_ms, 1),
+                session_id=p["session_id"],
+                utterance_id=p["utterance_id"],
+                turn=p["turn"],
+                text=p["text"],
+                llm_latency_ms=p["llm_ms"],
+                tts_latency_ms=tts_ms,
+            )
+            e2e_ms = round(p["retrieval_ms"] + p["llm_ms"] + (tts_ms or 0), 1)
+            await log_metrics(
+                session_id=p["session_id"],
+                turn=p["turn"],
+                retrieval_ms=p["retrieval_ms"],
+                llm_ms=p["llm_ms"],
+                tts_ms=tts_ms,
+                e2e_ms=e2e_ms,
             )
         except Exception as exc:
-            logger.warning("LLMResponseLogger: log_response failed: {}", exc)
+            logger.warning("LLMResponseLogger: DB write failed: {}", exc)
 
 
 def _format_context(chunks: List[RetrievedChunk]) -> str:

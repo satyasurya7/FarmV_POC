@@ -20,7 +20,7 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from src.config import settings
 from src.dashboard.routes import router as dashboard_router
 from src.database import close_pool, get_pool
-from src.db_logger.loggers import log_session_end, log_session_start
+from src.db_logger.loggers import log_session_end, log_session_start, update_session_phone
 from src.pipeline import run_pipeline
 from src.rag.embeddings import embed_query
 from src.telephony.tata_tele import create_transport
@@ -102,7 +102,21 @@ async def ws_smartflo(websocket: WebSocket):
     await log_session_start(session_id, phone_number, tata_call_id)
 
     pool = await get_pool()
-    transport = create_transport(websocket)
+
+    async def on_call_metadata(phone_number: str | None, call_sid: str | None) -> None:
+        """Called by TataTeleSerializer when the 'start' WebSocket event arrives."""
+        if not (phone_number or call_sid):
+            return
+        try:
+            await update_session_phone(session_id, phone_number or "", call_sid)
+            logger.info(
+                "Caller metadata updated session={} phone={} call_sid={}",
+                session_id, phone_number, call_sid,
+            )
+        except Exception as exc:
+            logger.warning("Failed to update caller metadata: {}", exc)
+
+    transport = create_transport(websocket, metadata_callback=on_call_metadata)
 
     try:
         await run_pipeline(transport=transport, pool=pool, session_id=session_id)

@@ -8,8 +8,9 @@ Real-time Telugu voice agent for telephonic farmer support, powered by RAG over 
 
 ```mermaid
 flowchart LR
-    Caller["📞 Caller\n(Farmer)"]
+    Caller["Caller\n(Farmer)"]
     TataTele["Tata Tele\nBusiness Services\n(Telephony)"]
+    NGROK["NGROK\nHTTPS Tunnel"]
     WS["WebSocket\nTransport"]
     STT["Soniox STT\n(Telugu)"]
     Guard["STT Guard\nProcessor"]
@@ -20,7 +21,8 @@ flowchart LR
     KB["Knowledge Base\n2,307 Q&A chunks"]
 
     Caller <-->|Audio| TataTele
-    TataTele <-->|WebSocket Audio| WS
+    TataTele <-->|wss://| NGROK
+    NGROK <-->|ws://localhost:8080| WS
     WS -->|Audio frames| STT
     STT -->|Text| Guard
     Guard -->|Filtered text| RAG
@@ -30,100 +32,149 @@ flowchart LR
     RAG -->|Augmented prompt| LLM
     LLM -->|Response text| TTS
     TTS -->|Audio frames| WS
-    WS <-->|Audio| TataTele
 
     RAG -.->|Retrieval logs| DB
     LLM -.->|Response logs| DB
     STT -.->|Utterance logs| DB
-    TTS -.->|Metrics| DB
 ```
+
+Full diagram with sequence and ER: [docs/architecture_diagram.md](docs/architecture_diagram.md)
 
 ---
 
-## Quick Start
+## Quick Start (Fedora · Podman · NGROK)
 
 ### 1. Prerequisites
-- Docker Desktop
-- Python 3.11+
-- Credentials: Soniox, Cartesia, Vertex AI, Tata Tele
+
+```bash
+sudo dnf install podman podman-compose   # Fedora
+pip install ngrok                        # or: snap install ngrok
+```
 
 ### 2. Clone and configure
+
 ```bash
 git clone <repo-url>
-cd farmv-poc
+cd FarmV-POC
 cp .env.example .env
-# Fill in all values in .env (see Environment Variables below)
+# Edit .env — fill all API keys
 ```
 
 ### 3. Place credentials
-```
-credentials/
-└── service_account.json    ← Vertex AI / Google Cloud service account JSON
-```
 
-### 4. Start the database
 ```bash
-docker compose up postgres -d
+mkdir -p credentials knowledge_base
+
+# Vertex AI service account JSON
+cp /path/to/sa.json credentials/vertex-ai-project-494805-0340a8a815b9.json
+
+# Knowledge base (DOCX)
+cp /path/to/rythunestam_kb_v1.4.docx knowledge_base/
 ```
 
-### 5. Ingest the knowledge base
+### 4. Start containers
+
 ```bash
-# Place KB files in knowledge_base/
-cp "Rythunestam_Knowledge base_V 1.4 dt 19052026 (1).docx" knowledge_base/rythunestam_kb_v1.4.docx
-
-python -m scripts.ingest_kb --source knowledge_base/
+podman compose up -d
+podman compose logs -f voice_agent      # watch startup — wait for "Server ready on port 8080"
 ```
 
-### 6. Start the voice agent
+### 5. Ingest knowledge base
+
 ```bash
-# Option A: Docker (recommended for production)
-docker compose up --build
-
-# Option B: Local dev
-pip install -r requirements.txt
-python -m src.server
+podman exec farmvaidya_agent python scripts/ingest_kb.py
+# Expected: "Ingested N chunks into pgvector"
 ```
 
-The agent listens on:
-- `http://localhost:8080/health` — health check
-- `http://localhost:8080/metrics` — 24h call stats  
-- `ws://localhost:8765/ws/call` — telephony WebSocket (Tata Tele connects here)
+### 6. Expose via NGROK
+
+```bash
+# Authenticate (once)
+ngrok config add-authtoken YOUR_NGROK_AUTHTOKEN
+
+# Start tunnel (keep this terminal open)
+ngrok start --config ngrok.yml farmvaidya
+```
+
+Copy the HTTPS URL shown by NGROK (e.g. `https://abc123.ngrok.io`).
+
+### 7. Configure Tata Tele SmartFlo
+
+In the Tata Tele SmartFlo portal, set the **WebSocket Callback URL** for your DID number:
+
+```
+wss://abc123.ngrok.io/ws/smartflo
+```
+
+Headers sent by Tata Tele (read by the agent):
+- `X-Caller-ID` — caller's phone number
+- `X-Call-ID` — Tata Tele call reference ID
+
+### 8. Verify
+
+```bash
+curl http://localhost:8080/health
+# {"status":"ok","active_sessions":0}
+
+curl http://localhost:8080/metrics
+# {"active_calls":0,"completed_calls":N,...}
+```
+
+Place a test call to your DID number. Monitor:
+```bash
+podman compose logs -f voice_agent
+```
 
 ---
 
 ## Environment Variables
 
-| Variable | Description | Example |
+| Variable | Description | Required |
 |---|---|---|
-| `POSTGRES_HOST` | DB host | `localhost` |
-| `POSTGRES_PORT` | DB port | `5433` |
-| `POSTGRES_DB` | DB name | `farmvaidya` |
-| `POSTGRES_USER` | DB user | `farmvaidya` |
-| `POSTGRES_PASSWORD` | DB password | `changeme` |
-| `GOOGLE_CLOUD_PROJECT` | GCP project ID | `my-project-123` |
-| `GOOGLE_CLOUD_REGION` | Vertex AI region | `asia-south1` |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Path to service account JSON | `./credentials/sa.json` |
-| `LLM_MODEL` | Gemini model name | `gemini-2.5-flash` |
-| `SONIOX_API_KEY` | Soniox API key | `sk-...` |
-| `CARTESIA_API_KEY` | Cartesia API key | `...` |
-| `CARTESIA_TELUGU_VOICE_ID` | Cartesia Telugu voice ID | `...` |
-| `TATA_TELE_API_KEY` | Tata Tele API key | `...` |
-| `TATA_TELE_ENDPOINT` | Tata Tele WebSocket URL | `wss://...` |
-| `TATA_TELE_DID_NUMBER` | Inbound DID number | `+9140...` |
-| `RAG_TOP_K` | Chunks to retrieve per query | `5` |
-| `RAG_SIMILARITY_THRESHOLD` | Minimum cosine score | `0.65` |
-| `SERVER_PORT` | HTTP port | `8080` |
-| `WEBSOCKET_PORT` | WebSocket port for telephony | `8765` |
+| `POSTGRES_HOST` | `postgres` (inside container) / `localhost` (local) | Yes |
+| `POSTGRES_PORT` | Default `5433` on host | Yes |
+| `POSTGRES_DB` | Database name | Yes |
+| `POSTGRES_USER` | DB user | Yes |
+| `POSTGRES_PASSWORD` | DB password | Yes |
+| `GOOGLE_CLOUD_PROJECT` | GCP project ID | Yes |
+| `GOOGLE_CLOUD_REGION` | Vertex AI region — `asia-south1` | Yes |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to service account JSON | Yes |
+| `LLM_MODEL` | `gemini-2.5-flash` | Yes |
+| `SONIOX_API_KEY` | Soniox STT API key | Yes |
+| `CARTESIA_API_KEY` | Cartesia TTS API key | Yes |
+| `CARTESIA_TELUGU_VOICE_ID` | Cartesia Telugu voice ID | Yes |
+| `TATA_TELE_API_KEY` | Tata Tele API key | Yes |
+| `TATA_TELE_ENDPOINT` | Tata Tele WebSocket URL | Yes |
+| `TATA_TELE_DID_NUMBER` | DID number for inbound calls | Yes |
+| `RAG_TOP_K` | Chunks to retrieve per query (default `5`) | No |
+| `RAG_SIMILARITY_THRESHOLD` | Minimum cosine score (default `0.65`) | No |
+| `SERVER_PORT` | HTTP + WebSocket port (default `8080`) | No |
+| `LOG_LEVEL` | `INFO` / `DEBUG` | No |
 
 ---
 
-## Tata Tele Configuration
+## Useful Commands
 
-1. Log in to the Tata Tele Business Services portal
-2. Navigate to your DID number settings
-3. Set the **Media Stream / Webhook URL** to: `ws://<your-server-ip>:8765/ws/call`
-4. Set caller ID header to `X-Caller-ID` and call ID header to `X-Call-ID`
-5. Confirm the audio format — our server expects **16-bit PCM at 16 kHz** (if Tata Tele uses µ-law 8kHz, update `src/telephony/tata_tele.py`)
+```bash
+# Live logs
+podman compose logs -f voice_agent
+
+# Rebuild and restart agent (after code change)
+podman compose build voice_agent && podman compose up -d voice_agent
+
+# Connect to PostgreSQL
+podman exec -it farmvaidya_postgres psql -U farmvaidya -d farmvaidya
+
+# Query recent calls
+podman exec -it farmvaidya_postgres psql -U farmvaidya -d farmvaidya \
+  -c "SELECT session_id, phone_number, status, duration_s, turn_count FROM call_sessions ORDER BY started_at DESC LIMIT 10;"
+
+# Stop (keep data)
+podman compose down
+
+# Stop and wipe DB
+podman compose down -v
+```
 
 ---
 
@@ -132,48 +183,64 @@ The agent listens on:
 Each incoming WebSocket connection spawns an independent asyncio task with its own:
 - Pipecat pipeline instance
 - PostgreSQL session row
-- LLM message history
+- LLM conversation history
 
-Sessions are completely isolated — no shared state between calls. The DB pool supports up to 20 concurrent connections, easily covering 5+ simultaneous calls.
+Sessions are fully isolated — no shared state between calls. The asyncpg pool supports 20 concurrent DB connections, comfortably handling 5+ simultaneous calls.
 
 ---
 
-## Database Schema
+## Database Tables
 
 | Table | Purpose |
 |---|---|
-| `call_sessions` | One row per call — start/end time, phone number, status |
+| `call_sessions` | One row per call — start/end, phone number, status, duration |
 | `utterances` | Per-turn user speech with STT confidence and latency |
-| `agent_responses` | Per-turn agent text with LLM and TTS latencies |
+| `agent_responses` | Per-turn agent text with LLM latency |
 | `retrieval_logs` | Retrieved chunks, scores, and retrieval latency per turn |
 | `error_logs` | Typed errors (stt_failure, llm_timeout, etc.) |
-| `performance_metrics` | Per-turn STT/retrieval/LLM/TTS/E2E latency summary |
-| `knowledge_chunks` | 768-dim embeddings for all KB chunks (pgvector) |
+| `performance_metrics` | Per-turn STT/retrieval/LLM/TTS/E2E latency breakdown |
+| `knowledge_chunks` | 768-dim vectors for all KB chunks (pgvector IVFFlat) |
 
 ---
 
 ## Project Structure
 
 ```
-src/
-├── config.py           Settings from environment
-├── database.py         asyncpg connection pool
-├── pipeline.py         Pipecat pipeline (one instance per call)
-├── prompts.py          Telugu system prompt + canned responses
-├── server.py           FastAPI HTTP + /ws/call WebSocket entry
-├── error_handler.py    STTGuard + LLMRetry frame processors
-├── rag/
-│   ├── chunker.py      Q&A pair extraction from .docx
-│   ├── embeddings.py   Vertex AI text-multilingual-embedding-002
-│   ├── ingestion.py    Bulk KB ingest → pgvector
-│   └── retriever.py    Hybrid cosine + full-text search
-├── services/
-│   └── llm.py          Vertex AI LLM service factory
-├── telephony/
-│   └── tata_tele.py    WebSocket transport + Silero VAD
-└── db_logger/
-    └── loggers.py      Async DB logging for all pipeline events
-scripts/
-├── init_db.py          Apply schema.sql to existing DB
-└── ingest_kb.py        Chunk, embed, and upsert KB files
+FarmV-POC/
+├── compose.yml               Podman Compose (postgres + voice_agent)
+├── Dockerfile
+├── ngrok.yml                 NGROK v3 tunnel config
+├── schema.sql                PostgreSQL schema (auto-applied on first start)
+├── .env.example
+├── requirements.txt
+├── scripts/
+│   ├── ingest_kb.py          Ingest KB files → pgvector
+│   └── init_db.py            Apply schema to existing DB
+├── src/
+│   ├── server.py             FastAPI: /health /metrics /ws/smartflo
+│   ├── pipeline.py           Pipecat pipeline (per session)
+│   ├── config.py             Typed settings from .env
+│   ├── database.py           asyncpg pool
+│   ├── error_handler.py      STTGuard + LLMRetry processors
+│   ├── prompts.py            System prompt + Telugu canned responses
+│   ├── rag/                  Chunker · embeddings · ingestion · retriever
+│   ├── services/             LLM service (Vertex AI)
+│   ├── telephony/            Tata Tele WebSocket transport
+│   └── db_logger/            Async DB loggers
+└── docs/
+    ├── architecture_diagram.md
+    ├── deployment_guide.md
+    └── technical_notes.md
 ```
+
+---
+
+## Deliverables
+
+| # | Item | Location |
+|---|---|---|
+| 1 | Source code | This repository |
+| 2 | Architecture diagram | [docs/architecture_diagram.md](docs/architecture_diagram.md) |
+| 3 | Deployment guide | [docs/deployment_guide.md](docs/deployment_guide.md) |
+| 4 | Technical notes | [docs/technical_notes.md](docs/technical_notes.md) |
+| 5 | Demonstration video | Pending |

@@ -39,9 +39,11 @@ class TataTeleSerializer(FrameSerializer):
     Outgoing PCM  → encode to µ-law → base64 → JSON text frame
     """
 
-    def __init__(self) -> None:
+    def __init__(self, metadata_callback=None) -> None:
         super().__init__()
         self._stream_sid: str | None = None
+        # Optional async callback(phone_number, call_sid) fired on 'start' event.
+        self._metadata_callback = metadata_callback
 
     async def serialize(self, frame: Frame) -> str | bytes | None:
         if not isinstance(frame, OutputAudioRawFrame):
@@ -74,12 +76,25 @@ class TataTeleSerializer(FrameSerializer):
         event = msg.get("event")
 
         if event == "start":
-            self._stream_sid = msg.get("streamSid") or msg.get("start", {}).get("streamSid")
-            fmt = msg.get("start", {}).get("mediaFormat", {})
+            start = msg.get("start", {})
+            self._stream_sid = msg.get("streamSid") or start.get("streamSid")
+            fmt = start.get("mediaFormat", {})
             logger.info(
                 "TataTeleSerializer: call started streamSid={} format={}",
                 self._stream_sid, fmt,
             )
+            # Tata Tele / Twilio put caller metadata in start.customParameters
+            custom = start.get("customParameters", {})
+            phone = (
+                custom.get("From") or custom.get("from")
+                or start.get("from") or start.get("From")
+            )
+            call_sid = start.get("callSid") or start.get("call_sid")
+            if self._metadata_callback and (phone or call_sid):
+                try:
+                    await self._metadata_callback(phone_number=phone, call_sid=call_sid)
+                except Exception as exc:
+                    logger.warning("TataTeleSerializer: metadata_callback error: {}", exc)
             return None
 
         if event == "media":
@@ -97,7 +112,7 @@ class TataTeleSerializer(FrameSerializer):
         return None
 
 
-def create_transport(websocket: WebSocket) -> FastAPIWebsocketTransport:
+def create_transport(websocket: WebSocket, metadata_callback=None) -> FastAPIWebsocketTransport:
     """Wrap an already-accepted FastAPI WebSocket as a pipecat transport."""
     return FastAPIWebsocketTransport(
         websocket=websocket,
@@ -107,7 +122,7 @@ def create_transport(websocket: WebSocket) -> FastAPIWebsocketTransport:
             audio_in_sample_rate=_SAMPLE_RATE,
             audio_out_sample_rate=_SAMPLE_RATE,
             add_wav_header=False,
-            serializer=TataTeleSerializer(),
+            serializer=TataTeleSerializer(metadata_callback=metadata_callback),
             session_timeout=300,
         ),
     )

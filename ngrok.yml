@@ -1,0 +1,20 @@
+version: "2"
+
+# Authenticate once: ngrok config add-authtoken <your-token>
+# Start:            ngrok start --config ngrok.yml farmvaidya
+# Start both:       ngrok start --all --config ngrok.yml
+
+tunnels:
+  farmvaidya:
+    proto: http
+    addr: 8765
+    # ngrok HTTP tunnels support WebSocket upgrade (wss:// works automatically)
+    # Give Tata Tele SmartFlo: wss://<subdomain>.ngrok-free.app/ws/smartflo
+
+  dashboard:
+    proto: http
+    addr: 8080
+    # Health:    https://<subdomain>.ngrok-free.app/health
+    # Metrics:   https://<subdomain>.ngrok-free.app/metrics
+    # Dashboard: https://<subdomain>.ngrok-free.app/dashboard
+    # Free tier: comment this out — only 1 tunnel on free plan
