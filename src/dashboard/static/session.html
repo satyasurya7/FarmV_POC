@@ -49,6 +49,12 @@
       <div id="metrics-content"></div>
     </div>
 
+    <!-- Errors -->
+    <div class="bg-white rounded-xl shadow p-5">
+      <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">Errors &amp; Exceptions</h2>
+      <div id="errors-content"><div class="text-gray-300 text-sm text-center py-3">Loading…</div></div>
+    </div>
+
   </main>
 
   <script>
@@ -148,6 +154,7 @@
                    📚 RAG: ${t.rag_chunks.length} chunk${t.rag_chunks.length>1?'s':''} retrieved
                    ${t.top_score != null ? `· top score ${t.top_score.toFixed(3)}` : ''}
                  </summary>
+                 ${t.rag_query ? `<p class="mt-1 text-xs text-gray-400 italic">Query: ${escHtml(t.rag_query)}</p>` : ''}
                  <div class="mt-1 space-y-1">
                    ${t.rag_chunks.map((c,i) => `
                      <p class="text-xs text-gray-500 leading-relaxed">
@@ -199,19 +206,25 @@
                   <th class="py-2 px-3">RAG</th>
                   <th class="py-2 px-3">LLM</th>
                   <th class="py-2 px-3">TTS</th>
-                  <th class="py-2 px-3">Total (est.)</th>
+                  <th class="py-2 px-3">E2E</th>
                 </tr>
               </thead>
               <tbody class="divide-y text-gray-600">
                 ${d.turns.map(t => {
-                  const total = [t.retrieval_latency_ms, t.llm_latency_ms, t.tts_latency_ms]
-                    .reduce((a,v) => v != null ? a + v : a, 0);
+                  // Use measured e2e from performance_metrics; fall back to sum of known stages
+                  const e2e = t.e2e_latency_ms != null
+                    ? Math.round(t.e2e_latency_ms) + 'ms'
+                    : (() => {
+                        const s = [t.retrieval_latency_ms, t.llm_latency_ms, t.tts_latency_ms]
+                          .reduce((a,v) => v != null ? a + v : a, 0);
+                        return s ? '~' + s + 'ms' : '—';
+                      })();
                   return `<tr>
                     <td class="py-2 px-3 text-left text-gray-400">Turn ${t.turn_number}</td>
                     <td class="py-2 px-3">${ms(t.retrieval_latency_ms)}</td>
                     <td class="py-2 px-3">${ms(t.llm_latency_ms)}</td>
                     <td class="py-2 px-3">${ms(t.tts_latency_ms)}</td>
-                    <td class="py-2 px-3 font-medium text-gray-700">${total ? total+'ms' : '—'}</td>
+                    <td class="py-2 px-3 font-medium text-gray-700">${e2e}</td>
                   </tr>`;
                 }).join('')}
               </tbody>
@@ -223,7 +236,37 @@
       }
     }
 
-    if (sessionId) load();
+    async function loadErrors() {
+      const r = await fetch(`/dashboard/api/sessions/${sessionId}/errors`);
+      const errors = r.ok ? await r.json() : [];
+      const el = document.getElementById('errors-content');
+      if (!errors.length) {
+        el.innerHTML = '<p class="text-gray-300 text-sm text-center py-3">No errors recorded for this session.</p>';
+        return;
+      }
+      const typeColor = {
+        stt_empty:      'background:#fef9c3;color:#854d0e',
+        llm_error:      'background:#fee2e2;color:#991b1b',
+        retrieval_error:'background:#fce7f3;color:#9d174d',
+        pipeline_error: 'background:#fee2e2;color:#991b1b',
+      };
+      el.innerHTML = `<div class="space-y-2">
+        ${errors.map(e => {
+          const style = typeColor[e.error_type] || 'background:#f3f4f6;color:#374151';
+          const t = new Date(e.created_at).toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata', hour12:true});
+          return `<div class="rounded-lg p-3 text-xs" style="${style}">
+            <div class="flex items-center justify-between mb-1">
+              <span class="font-semibold uppercase tracking-wide">${escHtml(e.error_type)}</span>
+              <span class="opacity-60">${t}</span>
+            </div>
+            <p class="leading-relaxed">${escHtml(e.error_message)}</p>
+            ${e.stack_trace ? `<details class="mt-1"><summary class="cursor-pointer opacity-60 hover:opacity-100">Stack trace</summary><pre class="mt-1 text-xs overflow-x-auto whitespace-pre-wrap opacity-70">${escHtml(e.stack_trace.substring(0,800))}</pre></details>` : ''}
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+
+    if (sessionId) { load(); loadErrors(); }
     else document.body.innerHTML = '<p class="p-8 text-red-500">No session ID in URL. Return to <a href="/dashboard" class="underline">dashboard</a>.</p>';
   </script>
 </body>

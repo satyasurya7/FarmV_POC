@@ -41,8 +41,10 @@ services:
       # :ro,z = read-only + shared SELinux label
       - ./credentials:/app/credentials:ro,z
       - ./knowledge_base:/app/knowledge_base:ro,z
+      # recordings must be writable and persist across restarts
+      - ./data/recordings:/app/data/recordings:z
     ports:
-      - "${SERVER_PORT:-8080}:8080"
+      - "${SERVER_PORT:-8765}:8765"
     restart: unless-stopped
     logging:
       driver: "json-file"

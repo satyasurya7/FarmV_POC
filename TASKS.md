@@ -75,7 +75,7 @@ Caller → Tata Tele (SIP/WebSocket)
 - [x] **6.5** `WebSocketDisconnect` caught in server.py; session marked "dropped"
 
 ## Phase 7: Testing & Validation ⬜
-- [ ] **7.1** Unit tests for RAG chunker and retriever (pytest)
+- [x] **7.1** Unit tests for RAG chunker and retriever (pytest) — 58 tests, all passing
 - [x] **7.2** Integration test — live calls in progress (API keys available)
 - [x] **7.3** Concurrent session load test — live environment (5 simultaneous WebSocket connections)
 - [x] **7.4** Telugu conversation correctness spot-check — live testing active

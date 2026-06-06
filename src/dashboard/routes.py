@@ -126,18 +126,22 @@ async def api_session_detail(session_id: str):
     turns_rows = await pool.fetch("""
         SELECT
             u.turn_number,
-            u.text           AS farmer_text,
-            ar.text          AS bot_text,
+            u.text               AS farmer_text,
+            ar.text              AS bot_text,
             ar.llm_latency_ms,
             ar.tts_latency_ms,
             rl.retrieved_chunks,
             rl.retrieval_latency_ms,
-            rl.top_score
+            rl.top_score,
+            rl.query             AS rag_query,
+            pm.e2e_latency_ms
         FROM utterances u
         LEFT JOIN agent_responses ar
             ON ar.session_id = u.session_id AND ar.turn_number = u.turn_number
         LEFT JOIN retrieval_logs rl
             ON rl.utterance_id = u.id
+        LEFT JOIN performance_metrics pm
+            ON pm.session_id = u.session_id AND pm.turn_number = u.turn_number
         WHERE u.session_id = $1::uuid
         ORDER BY u.turn_number
     """, session_id)
@@ -145,7 +149,6 @@ async def api_session_detail(session_id: str):
     turns = []
     for r in turns_rows:
         chunks = r["retrieved_chunks"]
-        # asyncpg returns JSONB as Python list already; fallback for string
         if isinstance(chunks, str):
             try:
                 chunks = json.loads(chunks)
@@ -159,6 +162,8 @@ async def api_session_detail(session_id: str):
             "tts_latency_ms": r["tts_latency_ms"],
             "retrieval_latency_ms": r["retrieval_latency_ms"],
             "top_score": r["top_score"],
+            "rag_query": r["rag_query"],
+            "e2e_latency_ms": r["e2e_latency_ms"],
             "rag_chunks": chunks or [],
         })
 
@@ -172,3 +177,23 @@ async def api_session_detail(session_id: str):
         "status": session["status"],
         "turns": turns,
     }
+
+
+@router.get("/api/sessions/{session_id}/errors")
+async def api_session_errors(session_id: str):
+    pool = await get_pool()
+    rows = await pool.fetch("""
+        SELECT error_type, error_message, stack_trace, created_at
+        FROM error_logs
+        WHERE session_id = $1::uuid
+        ORDER BY created_at
+    """, session_id)
+    return [
+        {
+            "error_type": r["error_type"],
+            "error_message": r["error_message"],
+            "stack_trace": r["stack_trace"],
+            "created_at": r["created_at"].isoformat(),
+        }
+        for r in rows
+    ]

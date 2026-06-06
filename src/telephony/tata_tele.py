@@ -61,6 +61,13 @@ class TataTeleSerializer(FrameSerializer):
         return json.dumps(msg)
 
     async def deserialize(self, data: str | bytes) -> Frame | None:
+        try:
+            return await self._deserialize(data)
+        except Exception as exc:
+            logger.warning("TataTeleSerializer: deserialize error ({}): {}", type(exc).__name__, exc)
+            return None
+
+    async def _deserialize(self, data: str | bytes) -> Frame | None:
         # Tata Tele always sends JSON text frames
         if isinstance(data, bytes):
             try:
@@ -73,10 +80,13 @@ class TataTeleSerializer(FrameSerializer):
         except Exception:
             return None
 
+        if not isinstance(msg, dict):
+            return None
+
         event = msg.get("event")
 
         if event == "start":
-            start = msg.get("start", {})
+            start = msg.get("start") or {}  # guard: "start": null → {}
             self._stream_sid = msg.get("streamSid") or start.get("streamSid")
             fmt = start.get("mediaFormat", {})
             logger.info(
@@ -98,7 +108,10 @@ class TataTeleSerializer(FrameSerializer):
             return None
 
         if event == "media":
-            payload_b64 = msg.get("media", {}).get("payload", "")
+            media = msg.get("media")
+            if not isinstance(media, dict):
+                return None
+            payload_b64 = media.get("payload", "")
             if not payload_b64:
                 return None
             ulaw = base64.b64decode(payload_b64)

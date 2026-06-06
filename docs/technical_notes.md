@@ -103,7 +103,7 @@ Turn 2: User: "Yield entha vastundi?"
 | Failure Mode | Handler | User Experience |
 |---|---|---|
 | Empty STT output | `STTGuardProcessor` drops frame, speaks canned "please repeat" | Smooth — caller hears Telugu prompt |
-| LLM API error | `LLMRetryProcessor` catches `ErrorFrame`, logs to DB | Silent recovery; Pipecat continues |
+| LLM API error | `LLMErrorProcessor` catches `ErrorFrame`, logs to DB, speaks Telugu fallback | Caller hears "సాంకేతిక సమస్య వచ్చింది" |
 | Empty RAG results | `NO_CONTEXT_RESPONSE` injected into system prompt | Telugu "I don't have that information" |
 | Embedding API timeout | `tenacity` retry 3× with exponential backoff | Transparent retry |
 | WebSocket disconnect | Caught in `server.py`, session marked "dropped" | Clean DB state |

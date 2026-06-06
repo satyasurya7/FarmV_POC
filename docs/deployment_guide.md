@@ -82,7 +82,7 @@ RAG_SIMILARITY_THRESHOLD=0.65
 
 # Server
 SERVER_HOST=0.0.0.0
-SERVER_PORT=8080
+SERVER_PORT=8765
 LOG_LEVEL=INFO
 ```
 
@@ -186,7 +186,7 @@ ngrok start --config ngrok.yml farmvaidya
 
 NGROK output shows:
 ```
-Forwarding    https://abc123.ngrok.io -> http://localhost:8080
+Forwarding    https://abc123.ngrok.io -> http://localhost:8765
 ```
 
 > **Free tier:** The URL changes every session. For a stable URL, use an NGROK paid plan with a fixed domain and uncomment the `domain:` line in `ngrok.yml`.
@@ -224,11 +224,11 @@ Open `http://localhost:4040` in a browser to inspect all WebSocket frames — us
 
 ```bash
 # Agent liveness
-curl http://localhost:8080/health
+curl http://localhost:8765/health
 # → {"status":"ok","active_sessions":0}
 
 # 24-hour stats
-curl http://localhost:8080/metrics
+curl http://localhost:8765/metrics
 # → {"active_calls":0,"completed_calls":5,"error_calls":0,"avg_duration_s":47.2}
 
 # Container status

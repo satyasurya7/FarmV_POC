@@ -22,7 +22,7 @@ flowchart LR
 
     Caller <-->|Audio| TataTele
     TataTele <-->|wss://| NGROK
-    NGROK <-->|ws://localhost:8080| WS
+    NGROK <-->|ws://localhost:8765| WS
     WS -->|Audio frames| STT
     STT -->|Text| Guard
     Guard -->|Filtered text| RAG
@@ -113,10 +113,10 @@ Headers sent by Tata Tele (read by the agent):
 ### 8. Verify
 
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:8765/health
 # {"status":"ok","active_sessions":0}
 
-curl http://localhost:8080/metrics
+curl http://localhost:8765/metrics
 # {"active_calls":0,"completed_calls":N,...}
 ```
 

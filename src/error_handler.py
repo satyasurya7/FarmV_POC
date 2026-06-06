@@ -7,13 +7,14 @@ from loguru import logger
 from pipecat.frames.frames import (
     ErrorFrame,
     Frame,
+    TTSSpeakFrame,
     TextFrame,
     TranscriptionFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from src.db_logger.loggers import log_error
-from src.prompts import STT_FAILURE_RESPONSE
+from src.prompts import LLM_ERROR_RESPONSE, STT_FAILURE_RESPONSE
 
 
 class STTGuardProcessor(FrameProcessor):
@@ -57,6 +58,13 @@ class LLMErrorProcessor(FrameProcessor):
             error_msg = str(frame.error)
             logger.warning("LLM error frame: {}", error_msg)
             await log_error(self._session_id, "llm_error", error_msg)
+            # Push the fallback message upstream so TTS speaks it.
+            # Upstream direction reaches CartesiaTTSService which sits before
+            # this processor in the pipeline; it generates audio and sends it
+            # downstream to transport.output() normally.
+            await self.push_frame(
+                TTSSpeakFrame(text=LLM_ERROR_RESPONSE), FrameDirection.UPSTREAM
+            )
             return  # swallow the error frame; pipeline continues
 
         await self.push_frame(frame, direction)
