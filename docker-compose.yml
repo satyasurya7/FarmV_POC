@@ -1,4 +1,7 @@
-version: "3.9"
+# Podman Compose — Farm Vaidya Telugu Voice Agent
+# Usage:  podman compose up -d
+#         podman compose logs -f voice_agent
+#         podman compose down
 
 services:
 
@@ -11,7 +14,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro,Z
+      - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro,z
     ports:
       - "${POSTGRES_PORT:-5433}:5432"
     healthcheck:
@@ -31,15 +34,14 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      # Override local dev path with the container path
       GOOGLE_APPLICATION_CREDENTIALS: /app/credentials/vertex-ai-project-494805-0340a8a815b9.json
-      POSTGRES_HOST: postgres   # use service name, not localhost
+      POSTGRES_HOST: postgres
     volumes:
-      - ./credentials:/app/credentials:ro,Z          # GCP service account JSON
-      - ./knowledge_base:/app/knowledge_base:ro,Z    # KB files for ingest
+      - ./credentials:/app/credentials:ro,z
+      - ./knowledge_base:/app/knowledge_base:ro,z
+      - ./data/recordings:/app/data/recordings:z
     ports:
-      - "${SERVER_PORT:-8080}:8080"                 # HTTP health + REST
-      - "${WEBSOCKET_PORT:-8765}:8765"              # Telephony WebSocket
+      - "${SERVER_PORT:-8765}:8765"
     restart: unless-stopped
     logging:
       driver: "json-file"
