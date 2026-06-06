@@ -65,9 +65,12 @@ _STT_TERMS = [
     # Crop variety codes common in KB
     "BPT 2537", "WGL 32170", "MTU 1010", "MTU 7029", "HMT Sona",
     "NLR 34449", "Cottondora Sannalu", "Swarna", "Tellahamsa",
-    # Key agricultural terms
-    "జీవామృతం", "ఘనజీవామృతం", "పంచగవ్య", "ఆచ్ఛాదన", "సేంద్రియ",
+    # Key agricultural terms (Telugu script helps stt-rt-v4 anchor to the correct grapheme)
+    "జీవామృతం", "జీవా", "ఘనజీవామృతం", "పంచగవ్య", "ఆచ్ఛాదన", "సేంద్రియ",
     "ప్రకృతి వ్యవసాయం", "రైతు నెస్తం", "Farm Vaidya",
+    # Additional crop/farming terms
+    "దశపర్ణి కషాయం", "వేప నూనె", "వేప పిండి", "బోరాన్", "జింక్",
+    "ఆకు తోమర", "కాండం తెగులు", "వేర్లు తెగులు", "పురుగులు", "నీరు నిలవడం",
 ]
 
 from src.config import settings
@@ -156,19 +159,28 @@ class RAGContextProcessor(FrameProcessor):
             context = frame.context
             messages = context.get_messages()
 
-            # Collect last 3 user utterances for context-aware RAG retrieval.
+            # Collect last 3 user utterances + the most recent assistant response.
             # Follow-up questions like "ఎంత వాడాలి?" are too vague on their own;
             # prepending prior turns restores the crop/topic for the embedding search
             # and keeps the variety name in scope for 3-turn chains like:
             #   "BPT 2537 duration?" → "Yield?" → "Seed rate?"
+            # The last assistant response is kept so we can handle confirmation turns:
+            # when user says "అవును" (yes) after bot asked "జీవామృతం గురించా?", the
+            # assistant text contains the actual topic — use it as the RAG query.
             user_turns: list[str] = []
+            last_assistant_msg: str | None = None
             for m in reversed(messages):
-                if m.get("role") == "user":
+                role = m.get("role")
+                if role == "user":
                     content = m.get("content")
                     if content and isinstance(content, str):
                         user_turns.append(content)
                     if len(user_turns) >= 3:
                         break
+                elif role == "assistant" and last_assistant_msg is None:
+                    content = m.get("content")
+                    if content and isinstance(content, str):
+                        last_assistant_msg = content
 
             user_msg = user_turns[0] if user_turns else None  # current utterance (for logging)
             rag_query = " ".join(reversed(user_turns)) if user_turns else None  # prev + current
@@ -196,10 +208,18 @@ class RAGContextProcessor(FrameProcessor):
                 # These words never appear in the crop KB, so retrieval always
                 # returns 0 chunks → NO_CONTEXT_RESPONSE echoed back. Rule 5
                 # in the system prompt handles conversational responses.
+                # Exception: if the user confirms (e.g. "అవును") after the bot asked
+                # a clarification question, the assistant's response names the actual
+                # topic (e.g. "జీవామృతం గురించి అడుగుతున్నారా?"). In that case we
+                # use the assistant text as the RAG query so the right chunks are found.
                 filler_only = bool(user_msg) and all(
                     w.lower().strip(".,?!") in _GREETING_WORDS
                     for w in user_msg.split()
                 )
+
+                if filler_only and last_assistant_msg and len(last_assistant_msg.split()) > 3:
+                    rag_query = last_assistant_msg
+                    filler_only = False
 
                 if filler_only:
                     chunks, retrieval_ms = [], 0.0
