@@ -187,7 +187,6 @@ class RAGContextProcessor(FrameProcessor):
 
             if user_msg:
                 self._turn += 1
-                t0 = time.monotonic()
 
                 self._utterance_id = await log_utterance(
                     session_id=self._session_id,

@@ -16,7 +16,7 @@ from src.config import settings
 
 
 def _get_client():
-    from vertexai.language_models import TextEmbeddingModel  # type: ignore
+    from vertexai.language_models import TextEmbeddingModel, TextEmbeddingInput  # type: ignore  # noqa: F401
     import vertexai
 
     vertexai.init(project=settings.vertex.project, location=settings.vertex.region)
@@ -54,9 +54,12 @@ def _token_batches(texts: List[str]) -> List[List[str]]:
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def _embed_batch(batch: List[str]) -> List[List[float]]:
+    from vertexai.language_models import TextEmbeddingInput  # type: ignore
     loop = asyncio.get_event_loop()
     model = _model_instance()
-    embeddings = await loop.run_in_executor(None, lambda b=batch: model.get_embeddings(b))
+    # TextEmbeddingInput avoids the deprecated string-list code path (removal: 2026-06-24)
+    inputs = [TextEmbeddingInput(text=t, task_type="RETRIEVAL_QUERY") for t in batch]
+    embeddings = await loop.run_in_executor(None, lambda b=inputs: model.get_embeddings(b))
     return [e.values for e in embeddings]
 
 

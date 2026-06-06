@@ -30,17 +30,18 @@ async def log_session_start(session_id: str, phone_number: str | None, tata_call
 
 
 async def update_session_phone(
-    session_id: str, phone_number: str, call_sid: str | None = None
+    session_id: str, phone_number: str | None, call_sid: str | None = None
 ) -> None:
     p = await _pool()
+    # COALESCE on both fields: never overwrite an existing value with NULL/empty
     await p.execute(
         """
         UPDATE call_sessions
-        SET phone_number = $2,
+        SET phone_number = COALESCE(NULLIF($2, ''), phone_number),
             tata_call_id = COALESCE($3, tata_call_id)
         WHERE id = $1::uuid
         """,
-        session_id, phone_number, call_sid,
+        session_id, phone_number or None, call_sid,
     )
 
 
@@ -54,13 +55,14 @@ async def log_caller_name(session_id: str, name: str) -> None:
 
 async def log_session_end(session_id: str, status: str = "completed") -> None:
     p = await _pool()
+    # AND status = 'active' guard: makes repeated calls from pipeline + server idempotent
     await p.execute(
         """
         UPDATE call_sessions
         SET ended_at = NOW(),
             duration_s = EXTRACT(EPOCH FROM (NOW() - started_at)),
             status = $2
-        WHERE id = $1::uuid
+        WHERE id = $1::uuid AND status = 'active'
         """,
         session_id, status,
     )

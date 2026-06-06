@@ -8,7 +8,6 @@ from pipecat.frames.frames import (
     ErrorFrame,
     Frame,
     TTSSpeakFrame,
-    TextFrame,
     TranscriptionFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -37,7 +36,7 @@ class STTGuardProcessor(FrameProcessor):
                     self._session_id, "stt_empty", f"Empty transcription: {text!r}"
                 )
                 await self.push_frame(
-                    TextFrame(text=STT_FAILURE_RESPONSE), FrameDirection.DOWNSTREAM
+                    TTSSpeakFrame(text=STT_FAILURE_RESPONSE), FrameDirection.DOWNSTREAM
                 )
                 return
 
