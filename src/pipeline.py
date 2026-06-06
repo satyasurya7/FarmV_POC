@@ -48,8 +48,27 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.cartesia.tts import CartesiaTTSService, CartesiaTTSSettings
-from pipecat.services.soniox.stt import SonioxSTTService, SonioxSTTSettings
+from pipecat.services.soniox.stt import SonioxSTTService, SonioxSTTSettings, SonioxContextObject
 from pipecat.transcriptions.language import Language
+
+# Vocabulary hints for Soniox — boosts recognition of Telugu/Indian names and
+# crop variety codes that the base model frequently mishears on 8kHz telephony.
+_STT_TERMS = [
+    # Common Telugu / Indian first names
+    "Ravi", "Kiran", "Suresh", "Ramesh", "Naresh", "Venkat", "Krishna",
+    "Srinivas", "Prasad", "Rajesh", "Mahesh", "Ganesh", "Lokesh", "Rakesh",
+    "Vikram", "Anil", "Arun", "Arjun", "Ajay", "Vijay", "Sanjay", "Kumar",
+    "Lakshmi", "Padma", "Sunita", "Kavita", "Radha", "Sita", "Geetha",
+    "Swathi", "Priya", "Deepa", "Asha", "Usha", "Saritha", "Anitha",
+    "Narendra", "Chandra", "Bhaskar", "Sekhar", "Mohan", "Rajan", "Srinu",
+    "Naga", "Babu", "Reddy", "Rao", "Sharma", "Naidu", "Goud", "Patil",
+    # Crop variety codes common in KB
+    "BPT 2537", "WGL 32170", "MTU 1010", "MTU 7029", "HMT Sona",
+    "NLR 34449", "Cottondora Sannalu", "Swarna", "Tellahamsa",
+    # Key agricultural terms
+    "జీవామృతం", "ఘనజీవామృతం", "పంచగవ్య", "ఆచ్ఛాదన", "సేంద్రియ",
+    "ప్రకృతి వ్యవసాయం", "రైతు నెస్తం", "Farm Vaidya",
+]
 
 from src.config import settings
 from src.recording import BotTap, CallerTap, ConversationRecorder
@@ -318,7 +337,12 @@ async def run_pipeline(transport, pool, session_id: str) -> None:
     # Build services
     stt = SonioxSTTService(
         api_key=settings.soniox.api_key,
-        settings=SonioxSTTSettings(language_hints=[Language.TE]),
+        settings=SonioxSTTSettings(
+            model="stt-rt-v4",
+            language_hints=[Language.TE, Language.HI, Language.EN_IN],
+            max_endpoint_delay_ms=1500,
+            context=SonioxContextObject(terms=_STT_TERMS),
+        ),
     )
 
     llm = create_llm_service()
