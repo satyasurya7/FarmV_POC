@@ -15,6 +15,7 @@ Flow:
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from typing import List
@@ -63,29 +64,50 @@ from src.db_logger.loggers import (
 )
 
 
-def _extract_name(utterance: str) -> str:
-    """Extract caller's first name from turn-1 reply to 'మీ పేరు చెప్పగలరా?'
+# Words that are greetings, not names — stripped before name extraction
+_GREETING_WORDS = {
+    "హలో", "హాయ్", "నమస్కారం", "నమస్కరం", "నమస్కారాలు",
+    "hello", "hi", "hey", "namaskaram", "namaskar",
+    "ok", "okay", "సరే", "అవును", "యెస్", "yes",
+}
 
-    Handles patterns like:
-      'నా పేరు నరేంద్ర.'   → 'నరేంద్ర'
-      'నా పేరు రాజు గారు'  → 'రాజు'
-      'నేను సురేష్'        → 'సురేష్'
-      'రాజేష్'             → 'రాజేష్'
-    Falls back to the full utterance if no pattern matches.
+
+def _extract_name(utterance: str) -> str | None:
+    """Extract caller's name from an early turn after 'మీ పేరు చెప్పగలరా?'
+
+    Returns None if the utterance is just a greeting (హలో, నమస్కారం…)
+    so the caller gets another chance to give their actual name.
+
+    Handles:
+      'నా పేరు నరేంద్ర.'      → 'నరేంద్ర'
+      'నా పేరు రాజు గారు'     → 'రాజు'
+      'నేను సురేష్'           → 'సురేష్'
+      'హలో నరేంద్ర'           → 'నరేంద్ర'  (strips leading greeting)
+      'హలో'                   → None
+      'రాజేష్'                → 'రాజేష్'
     """
-    text = utterance.strip().rstrip(".")
+    # Strip leading greeting words to surface the actual content
+    words = utterance.strip().rstrip(".").split()
+    while words and words[0].lower().rstrip(",") in _GREETING_WORDS:
+        words.pop(0)
+    text = " ".join(words).strip()
+
+    if not text:
+        return None  # utterance was only greetings
+
     # "నా పేరు [name]" — optionally followed by honorifics
     m = re.search(r"నా పేరు\s+(.+?)(?:\s+(?:అండి|గారు|sir|Sir|madam))?$", text, re.IGNORECASE)
     if m:
         return m.group(1).strip().rstrip(".")
-    # "నేను [name]" — "I am [name]"
+    # "నేను [name]"
     m = re.search(r"నేను\s+(\S+)", text)
     if m:
         return m.group(1).rstrip("ని").strip()
-    # Short reply (≤ 2 words) — almost certainly just the name
+    # Short reply (≤ 2 words) with no pattern — almost certainly just the name
     if len(text.split()) <= 2:
         return text
-    return text
+    # Longer utterance with no name pattern — don't guess
+    return None
 
 
 from src.error_handler import LLMErrorProcessor, STTGuardProcessor
@@ -106,6 +128,7 @@ class RAGContextProcessor(FrameProcessor):
         self._turn = 0
         self._utterance_id: str | None = None
         self._last_retrieval_ms: float = 0.0  # read by LLMResponseLogger
+        self._name_logged: bool = False  # set once a real name is extracted
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -114,16 +137,18 @@ class RAGContextProcessor(FrameProcessor):
             context = frame.context
             messages = context.get_messages()
 
-            # Collect last 2 user utterances for context-aware RAG retrieval.
+            # Collect last 3 user utterances for context-aware RAG retrieval.
             # Follow-up questions like "ఎంత వాడాలి?" are too vague on their own;
-            # prepending the previous turn restores the topic for the embedding search.
+            # prepending prior turns restores the crop/topic for the embedding search
+            # and keeps the variety name in scope for 3-turn chains like:
+            #   "BPT 2537 duration?" → "Yield?" → "Seed rate?"
             user_turns: list[str] = []
             for m in reversed(messages):
                 if m.get("role") == "user":
                     content = m.get("content")
                     if content and isinstance(content, str):
                         user_turns.append(content)
-                    if len(user_turns) >= 2:
+                    if len(user_turns) >= 3:
                         break
 
             user_msg = user_turns[0] if user_turns else None  # current utterance (for logging)
@@ -139,25 +164,44 @@ class RAGContextProcessor(FrameProcessor):
                     text=user_msg,
                 )
 
-                # Turn 1 is the response to "మీ పేరు చెప్పగలరా?" — log extracted name
-                if self._turn == 1:
-                    await log_caller_name(self._session_id, _extract_name(user_msg))
+                # Scan the first 3 turns for the caller's name.
+                # Farmers often say "హలో" first, giving their name on turn 2 or 3.
+                # Stop as soon as a non-greeting, non-empty extraction succeeds.
+                if self._turn <= 3 and not self._name_logged:
+                    name = _extract_name(user_msg)
+                    if name:
+                        await log_caller_name(self._session_id, name)
+                        self._name_logged = True
 
-                try:
-                    chunks, retrieval_ms = await retrieve(self._pool, rag_query)
-                    self._last_retrieval_ms = retrieval_ms
-                    await log_retrieval(
-                        session_id=self._session_id,
-                        utterance_id=self._utterance_id,
-                        query=rag_query,
-                        chunks=chunks,
-                        latency_ms=retrieval_ms,
-                    )
-                except Exception as exc:
-                    logger.error("RAG retrieval error: {}", exc)
-                    await log_error(self._session_id, "retrieval_error", str(exc), exc)
-                    chunks = []
-                    retrieval_ms = 0.0
+                # Skip RAG for pure greeting/filler turns (e.g. "సరేనా", "హలో").
+                # These words never appear in the crop KB, so retrieval always
+                # returns 0 chunks → NO_CONTEXT_RESPONSE echoed back. Rule 5
+                # in the system prompt handles conversational responses.
+                filler_only = bool(user_msg) and all(
+                    w.lower().strip(".,?!") in _GREETING_WORDS
+                    for w in user_msg.split()
+                )
+
+                if filler_only:
+                    chunks, retrieval_ms = [], 0.0
+                else:
+                    try:
+                        chunks, retrieval_ms = await asyncio.wait_for(
+                            retrieve(self._pool, rag_query), timeout=10.0
+                        )
+                        self._last_retrieval_ms = retrieval_ms
+                        await log_retrieval(
+                            session_id=self._session_id,
+                            utterance_id=self._utterance_id,
+                            query=rag_query,
+                            chunks=chunks,
+                            latency_ms=retrieval_ms,
+                        )
+                    except Exception as exc:
+                        logger.error("RAG retrieval error: {}", exc)
+                        await log_error(self._session_id, "retrieval_error", str(exc), exc)
+                        chunks = []
+                        retrieval_ms = 0.0
 
                 kb_context = _format_context(chunks)
                 system_text = SYSTEM_PROMPT.format(context=kb_context or NO_CONTEXT_RESPONSE)

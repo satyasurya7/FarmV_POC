@@ -62,8 +62,7 @@ class RAGConfig:
 @dataclass
 class ServerConfig:
     host: str = field(default_factory=lambda: os.getenv("SERVER_HOST", "0.0.0.0"))
-    http_port: int = field(default_factory=lambda: int(os.getenv("SERVER_PORT", "8080")))
-    ws_port: int = field(default_factory=lambda: int(os.getenv("WEBSOCKET_PORT", "8765")))
+    http_port: int = field(default_factory=lambda: int(os.getenv("SERVER_PORT", "8765")))
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
 
 
