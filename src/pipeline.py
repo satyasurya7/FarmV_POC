@@ -360,8 +360,6 @@ async def run_pipeline(transport, pool, session_id: str) -> None:
         settings=SonioxSTTSettings(
             model="stt-rt-v4",
             language_hints=[Language.TE, Language.HI, Language.EN_IN],
-            finalize_on_end=True,
-            max_endpoint_delay_ms=1500,
             context=SonioxContextObject(terms=_STT_TERMS),
         ),
     )
