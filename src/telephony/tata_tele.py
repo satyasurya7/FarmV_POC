@@ -88,13 +88,13 @@ class TataTeleSerializer(FrameSerializer):
         if event == "start":
             start = msg.get("start") or {}  # guard: "start": null → {}
             self._stream_sid = msg.get("streamSid") or start.get("streamSid")
-            fmt = start.get("mediaFormat", {})
+            fmt = start.get("mediaFormat") or {}   # guard: null → {}
             logger.info(
                 "TataTeleSerializer: call started streamSid={} format={}",
                 self._stream_sid, fmt,
             )
             # Tata Tele / Twilio put caller metadata in start.customParameters
-            custom = start.get("customParameters", {})
+            custom = start.get("customParameters") or {}  # guard: null → {}
             phone = (
                 custom.get("From") or custom.get("from")
                 or start.get("from") or start.get("From")
